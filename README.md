@@ -353,4 +353,4 @@ MIT License - ver [LICENSE](LICENSE)
 
 Desarrollado como proyecto de portafolio para demostrar competencias en **AI Engineering / GenAI**.
 
-**Contacto:** [Tu información aquí]
+**Contacto:** [rubendqv@gmail.com - Ruben Quispe]
