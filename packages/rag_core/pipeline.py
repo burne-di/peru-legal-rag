@@ -1,18 +1,19 @@
 """
 RAG Pipeline - Orquesta todo el flujo de ingesta y consulta con guardrails
 """
+import re
 import time
 import unicodedata
-import re
 from pathlib import Path
-from .loaders import load_documents_from_directory, PDFLoader
-from .chunker import chunk_documents
-from .vectorstore import VectorStore
-from .generator import GeminiGenerator
-from .config import get_settings
-from .guardrails import GroundingChecker, RefusalPolicy, PIIScrubber
+
 from .cache import get_cache
-from .router import get_router, ModelRouter
+from .chunker import chunk_documents
+from .config import get_settings
+from .generator import GeminiGenerator
+from .guardrails import GroundingChecker, PIIScrubber, RefusalPolicy
+from .loaders import PDFLoader, load_documents_from_directory
+from .router import get_router
+from .vectorstore import VectorStore
 
 
 def normalize_query(text: str) -> str:

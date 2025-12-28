@@ -4,11 +4,11 @@ Evita llamadas repetidas a la API para preguntas similares.
 """
 import hashlib
 import json
-import time
-from pathlib import Path
-from dataclasses import dataclass, asdict
-from typing import Optional
 import threading
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Optional
 
 
 @dataclass

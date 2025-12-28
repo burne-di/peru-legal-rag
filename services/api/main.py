@@ -1,29 +1,30 @@
 """
 FastAPI Application - RAG Estado Peru API
 """
+import asyncio
+import json
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Agregar packages al path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
-from contextlib import asynccontextmanager
-import json
-import asyncio
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from packages.rag_core import RAGPipeline, __version__
-from .schemas import (
-    QueryRequest,
-    QueryResponse,
+from packages.rag_core import RAGPipeline, __version__  # noqa: E402
+
+from .schemas import (  # noqa: E402
+    Citation,
+    HealthResponse,
     IngestRequest,
     IngestResponse,
+    QueryRequest,
+    QueryResponse,
     StatsResponse,
-    HealthResponse,
-    Citation,
 )
 
 

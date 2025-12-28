@@ -6,7 +6,9 @@ import json
 import re
 import time
 from typing import Generator
+
 import google.generativeai as genai
+
 from .config import get_settings
 
 
