@@ -210,19 +210,23 @@ async def ingest(request: IngestRequest):
     if pipeline is None:
         raise HTTPException(status_code=503, detail="Pipeline no inicializado")
 
+    # Validar input antes del try-except
+    if not request.directory and not request.file_path:
+        raise HTTPException(
+            status_code=400, detail="Debe especificar 'directory' o 'file_path'"
+        )
+
     try:
         if request.directory:
             result = pipeline.ingest_directory(request.directory)
-        elif request.file_path:
-            result = pipeline.ingest_file(request.file_path)
         else:
-            raise HTTPException(
-                status_code=400, detail="Debe especificar 'directory' o 'file_path'"
-            )
+            result = pipeline.ingest_file(request.file_path)
 
         return IngestResponse(**result)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise  # Re-raise HTTPExceptions sin convertir a 500
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
