@@ -279,8 +279,8 @@ def load_documents_from_directory(directory: str | Path) -> list[Document]:
 
     documents = []
 
-    # Cargar PDFs
-    pdf_files = list(directory.glob("*.pdf"))
+    # Cargar PDFs (minúsculas y mayúsculas)
+    pdf_files = list(directory.glob("*.pdf")) + list(directory.glob("*.PDF"))
     for pdf_path in pdf_files:
         try:
             loader = PDFLoader(pdf_path)

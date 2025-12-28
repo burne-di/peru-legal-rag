@@ -1,75 +1,78 @@
 """
 Generator - Generación de respuestas con Gemini y citas (JSON estructurado)
+Soporta múltiples modelos y streaming.
 """
 import json
 import re
 import time
+from typing import Generator
 import google.generativeai as genai
 from .config import get_settings
 
 
 # Prompt que fuerza output JSON estructurado
-SYSTEM_PROMPT = """Eres un asistente especializado en normativa pública peruana.
-Tu función es responder preguntas basándote ÚNICAMENTE en los documentos proporcionados.
+SYSTEM_PROMPT = """Eres un asistente experto en normativa pública peruana.
+Tu tarea es responder preguntas usando la información de los documentos proporcionados.
 
-REGLAS ESTRICTAS:
-1. SOLO responde usando información de los documentos proporcionados
-2. SIEMPRE incluye citas textuales exactas de los documentos
-3. Si NO hay información suficiente, establece "refusal": true
-4. Sé preciso y conciso
-5. Responde en español
+INSTRUCCIONES:
+1. Responde basándote en los documentos proporcionados
+2. Incluye citas relevantes de los documentos cuando sea posible
+3. Si la información está parcialmente disponible, responde con lo que encuentres
+4. Solo usa "refusal": true si NO hay absolutamente ninguna información relevante
+5. Sé útil y proporciona la mejor respuesta posible
+6. Responde en español
 
-DEBES responder ÚNICAMENTE con un JSON válido con esta estructura exacta:
+Responde con un JSON válido con esta estructura:
 {
   "answer": "tu respuesta aquí",
   "citations": [
     {
-      "quote": "cita textual exacta del documento",
+      "quote": "cita del documento",
       "source": "nombre del documento",
       "page": número de página
     }
   ],
   "confidence": 0.0 a 1.0,
   "refusal": false,
-  "notes": "opcional: limitaciones o aclaraciones"
+  "notes": "opcional: aclaraciones"
 }
 
-IMPORTANTE:
-- "citations" debe contener citas TEXTUALES de los documentos, no paráfrasis
-- "confidence" debe reflejar qué tan seguro estás (0.0 = nada, 1.0 = total)
-- Si no encuentras información, usa "refusal": true y "citations": []
+NOTAS:
+- "confidence" refleja tu certeza (0.0 = baja, 1.0 = alta)
+- Prioriza dar una respuesta útil sobre rechazar
+- Las citas pueden ser paráfrasis si no encuentras texto exacto
+- NO uses bloques de código markdown (```), responde SOLO con el JSON puro
 - NO agregues texto fuera del JSON"""
 
 
 class GeminiGenerator:
     """Generador de respuestas usando Google Gemini con output JSON"""
 
-    def __init__(self):
+    def __init__(self, model_name: str | None = None):
         settings = get_settings()
         genai.configure(api_key=settings.google_api_key)
-        self.model = genai.GenerativeModel(settings.gemini_model)
-        self.model_name = settings.gemini_model
+        self.default_model_name = model_name or settings.gemini_model
+        self._models: dict[str, genai.GenerativeModel] = {}
 
-    def generate(
-        self,
-        query: str,
-        context_chunks: list[dict],
-        max_tokens: int = 1024
-    ) -> dict:
-        """
-        Genera una respuesta estructurada basada en la query y el contexto.
+    def _get_model(self, model_name: str | None = None) -> genai.GenerativeModel:
+        """Obtiene o crea una instancia del modelo especificado"""
+        name = model_name or self.default_model_name
+        if name not in self._models:
+            self._models[name] = genai.GenerativeModel(name)
+        return self._models[name]
 
-        Args:
-            query: Pregunta del usuario
-            context_chunks: Lista de chunks recuperados con content y metadata
-            max_tokens: Máximo de tokens en la respuesta
+    @property
+    def model(self) -> genai.GenerativeModel:
+        """Modelo por defecto (compatibilidad hacia atrás)"""
+        return self._get_model()
 
-        Returns:
-            dict con answer, citations, confidence, refusal, latency_ms, etc.
-        """
-        start_time = time.time()
+    @property
+    def model_name(self) -> str:
+        """Nombre del modelo por defecto"""
+        return self.default_model_name
 
-        # Construir contexto con metadata
+    def _build_prompt(self, query: str, context_chunks: list[dict]) -> str:
+        """Construye el prompt con contexto"""
         context_parts = []
         for i, chunk in enumerate(context_chunks, 1):
             source = chunk["metadata"].get("source", "Desconocido")
@@ -80,8 +83,7 @@ class GeminiGenerator:
 
         context_text = "\n\n---\n\n".join(context_parts)
 
-        # Construir prompt
-        prompt = f"""{SYSTEM_PROMPT}
+        return f"""{SYSTEM_PROMPT}
 
 DOCUMENTOS DE REFERENCIA:
 {context_text}
@@ -91,9 +93,35 @@ PREGUNTA DEL USUARIO:
 
 Responde SOLO con el JSON estructurado:"""
 
+    def generate(
+        self,
+        query: str,
+        context_chunks: list[dict],
+        max_tokens: int = 1024,
+        model_override: str | None = None
+    ) -> dict:
+        """
+        Genera una respuesta estructurada basada en la query y el contexto.
+
+        Args:
+            query: Pregunta del usuario
+            context_chunks: Lista de chunks recuperados con content y metadata
+            max_tokens: Máximo de tokens en la respuesta
+            model_override: Modelo específico a usar (opcional, para routing)
+
+        Returns:
+            dict con answer, citations, confidence, refusal, latency_ms, etc.
+        """
+        start_time = time.time()
+        used_model = model_override or self.default_model_name
+
+        # Construir prompt
+        prompt = self._build_prompt(query, context_chunks)
+
         # Generar respuesta
         try:
-            response = self.model.generate_content(
+            model = self._get_model(used_model)
+            response = model.generate_content(
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     max_output_tokens=max_tokens,
@@ -102,7 +130,7 @@ Responde SOLO con el JSON estructurado:"""
             )
             raw_response = response.text
         except Exception as e:
-            return self._error_response(str(e), time.time() - start_time)
+            return self._error_response(str(e), time.time() - start_time, used_model)
 
         # Parsear JSON de la respuesta
         parsed = self._parse_json_response(raw_response)
@@ -127,10 +155,76 @@ Responde SOLO con el JSON estructurado:"""
             "refusal": parsed.get("refusal", False),
             "notes": parsed.get("notes"),
             "sources_used": len(context_chunks),
-            "model": self.model_name,
+            "model": used_model,
             "latency_ms": latency_ms,
             "raw_llm_response": raw_response if parsed.get("_parse_error") else None
         }
+
+    def generate_stream(
+        self,
+        query: str,
+        context_chunks: list[dict],
+        max_tokens: int = 1024,
+        model_override: str | None = None
+    ) -> Generator[str, None, dict]:
+        """
+        Genera respuesta en modo streaming (para UX mejorada).
+
+        Yields:
+            Chunks de texto de la respuesta mientras se genera
+
+        Returns:
+            dict final con la respuesta completa parseada
+        """
+        start_time = time.time()
+        used_model = model_override or self.default_model_name
+
+        prompt = self._build_prompt(query, context_chunks)
+
+        try:
+            model = self._get_model(used_model)
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.2,
+                ),
+                stream=True
+            )
+
+            full_response = ""
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield chunk.text
+
+            # Parsear respuesta completa al final
+            parsed = self._parse_json_response(full_response)
+            latency_ms = int((time.time() - start_time) * 1000)
+
+            enriched_citations = self._enrich_citations(
+                parsed.get("citations", []),
+                context_chunks
+            )
+
+            if parsed.get("confidence") is None:
+                parsed["confidence"] = self._calculate_confidence(context_chunks)
+
+            # Retornar resultado final
+            return {
+                "answer": parsed.get("answer", "Error al procesar respuesta"),
+                "citations": enriched_citations,
+                "confidence": parsed.get("confidence", 0.0),
+                "refusal": parsed.get("refusal", False),
+                "notes": parsed.get("notes"),
+                "sources_used": len(context_chunks),
+                "model": used_model,
+                "latency_ms": latency_ms,
+            }
+
+        except Exception as e:
+            yield f"Error: {str(e)}"
+            return self._error_response(str(e), time.time() - start_time, used_model)
 
     def _parse_json_response(self, text: str) -> dict:
         """
@@ -143,22 +237,30 @@ Responde SOLO con el JSON estructurado:"""
         except json.JSONDecodeError:
             pass
 
-        # Buscar JSON en el texto
-        json_patterns = [
-            r'\{[\s\S]*\}',  # Cualquier cosa entre { }
-            r'```json\s*([\s\S]*?)\s*```',  # Bloque de código
-            r'```\s*([\s\S]*?)\s*```',  # Bloque de código sin especificar
+        # Primero: buscar bloques de código markdown (prioridad más alta)
+        # Estos patrones capturan el contenido DENTRO de los backticks
+        markdown_patterns = [
+            r'```json\s*([\s\S]*?)\s*```',  # ```json ... ```
+            r'```\s*([\s\S]*?)\s*```',      # ``` ... ```
         ]
 
-        for pattern in json_patterns:
-            matches = re.findall(pattern, text)
-            for match in matches:
+        for pattern in markdown_patterns:
+            match = re.search(pattern, text)
+            if match:
                 try:
-                    # Si es un grupo de captura, usar el grupo
-                    json_str = match if isinstance(match, str) else match[0]
-                    return json.loads(json_str)
+                    json_content = match.group(1).strip()
+                    return json.loads(json_content)
                 except json.JSONDecodeError:
                     continue
+
+        # Segundo: buscar JSON directo (sin markdown)
+        # Buscar el objeto JSON más externo
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
 
         # Si no se pudo parsear, retornar respuesta como texto plano
         return {
@@ -230,7 +332,7 @@ Responde SOLO con el JSON estructurado:"""
         confidence = min(avg_score + quality_bonus, 1.0)
         return round(confidence, 2)
 
-    def _error_response(self, error_msg: str, elapsed: float) -> dict:
+    def _error_response(self, error_msg: str, elapsed: float, model: str | None = None) -> dict:
         """Respuesta en caso de error"""
         return {
             "answer": f"Error al generar respuesta: {error_msg}",
@@ -239,7 +341,7 @@ Responde SOLO con el JSON estructurado:"""
             "refusal": True,
             "notes": "Error interno del sistema",
             "sources_used": 0,
-            "model": self.model_name,
+            "model": model or self.default_model_name,
             "latency_ms": int(elapsed * 1000),
             "error": error_msg
         }

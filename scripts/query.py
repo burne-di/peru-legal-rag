@@ -80,9 +80,11 @@ def process_question(pipeline: RAGPipeline, question: str, top_k: int):
     print("-" * 50)
 
     for i, citation in enumerate(result.get("citations", []), 1):
-        print(f"\n[{i}] {citation['source']} - Página {citation.get('page', '?')}")
+        print(f"\n[{i}] {citation.get('source', 'Desconocido')} - Página {citation.get('page', '?')}")
         print(f"    Relevancia: {citation.get('relevance_score', 0):.2%}")
-        print(f"    Extracto: {citation['excerpt'][:100]}...")
+        excerpt = citation.get('excerpt', citation.get('text', ''))
+        if excerpt:
+            print(f"    Extracto: {excerpt[:150]}...")
 
 
 if __name__ == "__main__":

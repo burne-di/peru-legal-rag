@@ -24,8 +24,8 @@ class GroundingChecker:
 
     def __init__(
         self,
-        min_similarity: float = 0.4,
-        min_grounding_ratio: float = 0.7
+        min_similarity: float = 0.3,  # Reducido para ser menos estricto
+        min_grounding_ratio: float = 0.5  # Reducido: 50% de afirmaciones respaldadas
     ):
         """
         Args:

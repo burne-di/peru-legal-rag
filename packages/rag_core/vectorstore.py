@@ -55,10 +55,14 @@ class VectorStore:
             settings=ChromaSettings(anonymized_telemetry=False)
         )
 
-        # Obtener o crear colección
+        # Obtener o crear colección con similitud coseno
+        # Coseno es más apropiado para embeddings de texto
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
-            metadata={"description": "RAG Estado Peru documents"}
+            metadata={
+                "description": "RAG Estado Peru documents",
+                "hnsw:space": "cosine"  # Usar similitud coseno
+            }
         )
 
         # Modelo de embeddings
@@ -113,13 +117,19 @@ class VectorStore:
         # Formatear resultados
         formatted_results = []
         for i in range(len(results["ids"][0])):
+            distance = results["distances"][0][i]
+            # Convertir distancia coseno a score de similitud (0-1)
+            # ChromaDB con coseno retorna: distance = 1 - cosine_similarity
+            # Por lo tanto: score = 1 - distance
+            # Esto da valores entre 0 (opuesto) y 1 (idéntico)
+            score = max(0.0, min(1.0, 1 - distance))
+
             formatted_results.append({
                 "chunk_id": results["ids"][0][i],
                 "content": results["documents"][0][i],
                 "metadata": results["metadatas"][0][i],
-                "distance": results["distances"][0][i],
-                # Convertir distancia a score de similitud (0-1)
-                "score": 1 - (results["distances"][0][i] / 2)
+                "distance": distance,
+                "score": score
             })
 
         return formatted_results
@@ -133,6 +143,9 @@ class VectorStore:
         self.client.delete_collection(self.collection_name)
         self.collection = self.client.create_collection(
             name=self.collection_name,
-            metadata={"description": "RAG Estado Peru documents"}
+            metadata={
+                "description": "RAG Estado Peru documents",
+                "hnsw:space": "cosine"
+            }
         )
         print("✓ Vector store limpiado")

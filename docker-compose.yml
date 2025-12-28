@@ -1,6 +1,5 @@
-version: '3.8'
-
 services:
+  # Servicio principal: API
   api:
     build:
       context: .
@@ -9,13 +8,14 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Persistir datos
       - ./data/raw:/app/data/raw
       - ./data/processed:/app/data/processed
       - ./data/chroma:/app/data/chroma
-      # Para desarrollo: montar código
-      - ./packages:/app/packages:ro
-      - ./services:/app/services:ro
+      - ./packages:/app/packages
+      - ./services:/app/services
+      - ./scripts:/app/scripts
+      - ./reports:/app/reports
+      - ./tests:/app/tests
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
@@ -30,23 +30,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
-
-  # Servicio opcional para ingesta inicial
-  ingest:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: rag-estado-peru-ingest
-    volumes:
-      - ./data/raw:/app/data/raw
-      - ./data/chroma:/app/data/chroma
-    environment:
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - CHROMA_PERSIST_DIR=/app/data/chroma
-    command: ["python", "scripts/ingest.py", "--directory", "/app/data/raw"]
-    profiles:
-      - ingest  # Solo se ejecuta con: docker compose --profile ingest up ingest
-
-volumes:
-  chroma_data:
+      start_period: 60s

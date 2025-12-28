@@ -64,8 +64,8 @@ class RefusalPolicy:
 
     def __init__(
         self,
-        min_relevance_score: float = 0.3,
-        min_grounding_score: float = 0.5,
+        min_relevance_score: float = 0.1,  # Bajado para ser menos estricto
+        min_grounding_score: float = 0.3,  # Bajado para ser menos estricto
         min_chunks_required: int = 1
     ):
         """

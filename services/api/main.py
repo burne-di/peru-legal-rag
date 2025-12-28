@@ -9,7 +9,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, StreamingResponse
 from contextlib import asynccontextmanager
+import json
+import asyncio
 
 from packages.rag_core import RAGPipeline, __version__
 from .schemas import (
@@ -92,9 +96,9 @@ async def query(request: QueryRequest):
         # Convertir citations al schema
         citations = [
             Citation(
-                source=c["source"],
+                source=c.get("source", "Desconocido"),
                 page=c.get("page"),
-                excerpt=c["excerpt"],
+                quote=c.get("quote", c.get("excerpt", "")),
                 relevance_score=c.get("relevance_score", 0)
             )
             for c in result.get("citations", [])
@@ -104,10 +108,97 @@ async def query(request: QueryRequest):
             answer=result["answer"],
             citations=citations,
             sources_used=result["sources_used"],
-            model=result.get("model")
+            model=result.get("model"),
+            confidence=result.get("confidence"),
+            latency_ms=result.get("latency_ms"),
+            from_cache=result.get("from_cache", False)
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/query/stream", tags=["RAG"])
+async def query_stream(request: QueryRequest):
+    """
+    Realiza una consulta RAG con streaming.
+
+    Retorna la respuesta en chunks mientras se genera,
+    mejorando la experiencia de usuario.
+
+    El stream envía eventos SSE (Server-Sent Events):
+    - data: {"type": "chunk", "content": "..."} - Chunks de texto
+    - data: {"type": "done", "result": {...}} - Resultado final con metadata
+    """
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline no inicializado")
+
+    if pipeline.get_stats()["total_chunks"] == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay documentos indexados. Use /ingest primero."
+        )
+
+    async def generate():
+        try:
+            # Primero verificar caché
+            from packages.rag_core.pipeline import normalize_query
+            normalized = normalize_query(request.question)
+
+            if pipeline.enable_cache:
+                cached = pipeline.cache.get(normalized)
+                if cached:
+                    # Enviar respuesta cacheada de inmediato
+                    cached["from_cache"] = True
+                    yield f"data: {json.dumps({'type': 'cached', 'result': cached})}\n\n"
+                    return
+
+            # Obtener chunks relevantes
+            relevant_chunks = pipeline.vector_store.search(
+                normalized,
+                top_k=request.top_k or pipeline.settings.top_k_results
+            )
+
+            # Hacer routing si está habilitado
+            model_override = None
+            if pipeline.enable_routing:
+                routing_decision = pipeline.router.route(request.question, relevant_chunks)
+                model_override = routing_decision.model
+                yield f"data: {json.dumps({'type': 'routing', 'model': model_override})}\n\n"
+
+            # Generar con streaming
+            stream = pipeline.generator.generate_stream(
+                request.question,
+                relevant_chunks,
+                model_override=model_override
+            )
+
+            full_response = ""
+            for chunk in stream:
+                full_response += chunk
+                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+                await asyncio.sleep(0)  # Permitir que el event loop procese
+
+            # Parsear resultado final
+            result = pipeline.generator._parse_json_response(full_response)
+
+            # Guardar en caché
+            if pipeline.enable_cache and not result.get("refusal"):
+                pipeline.cache.set(normalized, result)
+
+            # Enviar resultado final
+            yield f"data: {json.dumps({'type': 'done', 'result': result})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 @app.post("/ingest", response_model=IngestResponse, tags=["RAG"])
@@ -146,6 +237,21 @@ async def clear_index():
 
     pipeline.clear()
     return {"status": "success", "message": "Vector store limpiado"}
+
+
+# Servir interfaz web
+static_path = Path(__file__).parent / "static"
+if static_path.exists():
+    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Sirve la interfaz web"""
+    index_file = static_path / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    return {"message": "RAG Estado Peru API", "docs": "/docs"}
 
 
 if __name__ == "__main__":

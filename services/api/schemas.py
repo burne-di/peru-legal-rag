@@ -13,9 +13,9 @@ class QueryRequest(BaseModel):
 class Citation(BaseModel):
     """Una cita de un documento"""
     source: str
-    page: int | None
-    excerpt: str
-    relevance_score: float
+    page: int | None = None
+    quote: str | None = None
+    relevance_score: float = 0.0
 
 
 class QueryResponse(BaseModel):
@@ -24,6 +24,9 @@ class QueryResponse(BaseModel):
     citations: list[Citation]
     sources_used: int
     model: str | None = None
+    confidence: float | None = None
+    latency_ms: int | None = None
+    from_cache: bool = False
 
 
 class IngestRequest(BaseModel):
@@ -42,6 +45,15 @@ class IngestResponse(BaseModel):
     message: str | None = None
 
 
+class CacheStats(BaseModel):
+    """Estadísticas del caché"""
+    total_entries: int = 0
+    hits: int = 0
+    misses: int = 0
+    hit_rate_percent: float = 0.0
+    estimated_savings: str = ""
+
+
 class StatsResponse(BaseModel):
     """Estadísticas del sistema"""
     total_chunks: int
@@ -49,6 +61,10 @@ class StatsResponse(BaseModel):
     llm_model: str
     chunk_size: int
     top_k: int
+    cache_enabled: bool = False
+    cache_stats: CacheStats | None = None
+    routing_enabled: bool = False
+    available_models: list[str] | None = None
 
 
 class HealthResponse(BaseModel):
