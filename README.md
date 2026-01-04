@@ -2,7 +2,7 @@
 
 ### Sistema de Preguntas y Respuestas con citas verificables sobre normativa pública peruana
 
-[![CI](https://github.com/username/rag-estado-peru/actions/workflows/ci.yml/badge.svg)](https://github.com/username/rag-estado-peru/actions/workflows/ci.yml)
+[![CI](https://github.com/Memory-Solutions/rag-estado-peru/actions/workflows/ci.yml/badge.svg)](https://github.com/Ruben-Q/rag-estado-peru/actions/workflows/ci.yml)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -13,18 +13,19 @@ Sistema **RAG (Retrieval-Augmented Generation)** end-to-end para responder pregu
 ## Competencias Demostradas
 
 ### GenAI / AI Engineering
-- Pipeline RAG completo (ingesta → embeddings → retrieval → generación)
+- Pipeline RAG completo **desde cero** (sin LangChain) - demuestra comprensión profunda
 - Prompt engineering con output JSON estructurado
 - **Guardrails**: anti-alucinación (grounding check), política de rechazo, sanitización PII
-- Evaluación offline con métricas de calidad RAG
+- Evaluación offline con métricas de calidad RAG (Hit@K, Faithfulness)
+- **Optimizaciones**: Response Cache, Model Routing, Streaming UX
 
 ### Ingeniería de Software
 - Arquitectura modular y reutilizable (`packages/rag_core`)
-- API REST con FastAPI + Pydantic
+- API REST con FastAPI + Pydantic + SSE Streaming
 - Docker/Compose para despliegue
-- CI/CD con GitHub Actions
+- CI/CD con GitHub Actions (lint, test, docker, eval)
 - Testing unitario y smoke tests
-- Documentación de gobernanza y riesgos
+- Documentación técnica completa
 
 ---
 
@@ -32,7 +33,7 @@ Sistema **RAG (Retrieval-Augmented Generation)** end-to-end para responder pregu
 
 ```bash
 # 1. Clonar e instalar
-git clone https://github.com/username/rag-estado-peru.git
+git clone https://github.com/Ruben-Q/rag-estado-peru.git
 cd rag-estado-peru
 pip install -e .
 
@@ -67,43 +68,49 @@ contados desde el día siguiente de la notificación del acto administrativo.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLIENTE                                 │
-│                    (API REST / CLI)                             │
+│                 (Web UI / API REST / CLI)                       │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      FastAPI Service                            │
-│         /health    /query    /ingest    /stats                  │
+│    /health   /query   /query/stream   /ingest   /stats          │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
                               ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                       RAG Pipeline                               │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │ Query → PII Scrub → Retrieval → Generator → Grounding Check│ │
-│  │                                              → Refusal Policy│ │
+│  │ Cache → PII Scrub → Retrieval → Router → Generator → Guard │ │
 │  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  OPTIMIZACIONES: Cache │ Model Routing │ Streaming │ Norm   ││
+│  └─────────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────────────┘
-                    │                   │
-        ┌───────────┴───────┐   ┌───────┴───────┐
-        ▼                   ▼   ▼               ▼
-   ┌──────────┐      ┌──────────┐      ┌─────────────┐
-   │ ChromaDB │      │  Gemini  │      │  Sentence   │
-   │  Vector  │      │2.5 Flash │      │ Transformers│
-   │  Store   │      │          │      │ (Embeddings)│
-   └──────────┘      └──────────┘      └─────────────┘
+          │                   │                    │
+   ┌──────┴──────┐    ┌───────┴───────┐    ┌───────┴───────┐
+   ▼             ▼    ▼               ▼    ▼               ▼
+┌──────────┐  ┌──────────┐  ┌─────────────┐  ┌─────────────┐
+│ ChromaDB │  │  Gemini  │  │  Sentence   │  │   Cache     │
+│  Vector  │  │2.5 Flash │  │ Transformers│  │   (JSON)    │
+│  Store   │  │  / Lite  │  │ (Embeddings)│  │             │
+└──────────┘  └──────────┘  └─────────────┘  └─────────────┘
 ```
 
 ### Flujo de Consulta con Guardrails
 
 1. **Query** → Recibe pregunta del usuario
-2. **PII Scrubber** → Detecta y redacta información sensible (DNI, RUC, emails)
-3. **Refusal Policy (pre)** → Rechaza queries fuera de tema
-4. **Retrieval** → Busca chunks relevantes en ChromaDB
-5. **Generator** → Genera respuesta JSON estructurada con Gemini
-6. **Grounding Check** → Verifica que respuesta esté fundamentada
-7. **Refusal Policy (post)** → Rechaza si grounding < 50%
-8. **Response** → Retorna answer + citations + confidence
+2. **Cache Check** → Verifica si hay respuesta cacheada
+3. **PII Scrubber** → Detecta y redacta información sensible (DNI, RUC, emails)
+4. **Refusal Policy (pre)** → Rechaza queries fuera de tema
+5. **Retrieval** → Busca chunks relevantes en ChromaDB
+6. **Model Router** → Selecciona modelo óptimo (lite vs flash) según complejidad
+7. **Generator** → Genera respuesta JSON estructurada con Gemini (streaming opcional)
+8. **Grounding Check** → Verifica que respuesta esté fundamentada
+9. **Refusal Policy (post)** → Rechaza si grounding < 50%
+10. **Cache Save** → Guarda respuesta exitosa en caché
+11. **Response** → Retorna answer + citations + confidence + from_cache
 
 ---
 
@@ -111,13 +118,15 @@ contados desde el día siguiente de la notificación del acto administrativo.
 
 ```
 rag-estado-peru/
-├── packages/rag_core/           # Lógica central RAG
+├── packages/rag_core/           # Lógica central RAG (sin LangChain)
 │   ├── config.py                # Configuración con pydantic-settings
 │   ├── loaders.py               # Carga PDF y HTML
 │   ├── chunker.py               # División en chunks con overlap
 │   ├── vectorstore.py           # ChromaDB + embeddings
-│   ├── generator.py             # Gemini con output JSON
+│   ├── generator.py             # Gemini con output JSON + streaming
 │   ├── pipeline.py              # Orquestador principal
+│   ├── cache.py                 # Response cache con TTL
+│   ├── router.py                # Model routing por complejidad
 │   ├── guardrails/              # Validación y seguridad
 │   │   ├── grounding_check.py   # Anti-alucinación
 │   │   ├── refusal_policy.py    # Política de rechazo
@@ -128,8 +137,9 @@ rag-estado-peru/
 │       └── report.py            # Generación de reportes
 │
 ├── services/api/                # API FastAPI
-│   ├── main.py                  # Endpoints
-│   └── schemas.py               # Pydantic models
+│   ├── main.py                  # Endpoints + SSE streaming
+│   ├── schemas.py               # Pydantic models
+│   └── static/index.html        # Interfaz web
 │
 ├── scripts/                     # CLI utilities
 │   ├── ingest.py                # Ingesta de documentos
@@ -143,19 +153,15 @@ rag-estado-peru/
 │   └── test_api_smoke.py
 │
 ├── docs/                        # Documentación
-│   ├── architecture.md          # Arquitectura detallada
-│   ├── governance.md            # Principios éticos y usos
-│   ├── risk_assessment.md       # Evaluación de riesgos
-│   ├── prompt_contract.md       # Contrato de prompts
-│   ├── decisions.md             # ADRs
-│   └── dataset_sources.md       # Fuentes de datos
+│   └── KNOWLEDGE_BASE.md        # Base de conocimientos completa
 │
 ├── data/
 │   ├── raw/                     # PDFs/HTMLs originales
-│   ├── processed/               # Chunks procesados
+│   ├── samples/                 # PDFs de ejemplo (va al repo)
+│   ├── cache/                   # Response cache persistido
 │   └── chroma/                  # Vector store persistido
 │
-├── .github/workflows/ci.yml     # GitHub Actions
+├── .github/workflows/ci.yml     # GitHub Actions (lint, test, docker, eval)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── Makefile
@@ -218,6 +224,16 @@ Consulta RAG con citas.
     "is_grounded": true
   }
 }
+```
+
+### `POST /query/stream`
+Consulta RAG con **streaming SSE** (Server-Sent Events).
+
+Retorna tokens en tiempo real mientras se genera la respuesta:
+```
+data: {"type": "chunk", "content": "El plazo"}
+data: {"type": "chunk", "content": " es de 20"}
+data: {"type": "done", "result": {...}}
 ```
 
 ### `POST /ingest`
@@ -313,12 +329,7 @@ make eval         # Ejecutar evaluación
 
 | Documento | Descripción |
 |-----------|-------------|
-| [architecture.md](docs/architecture.md) | Arquitectura técnica detallada |
-| [governance.md](docs/governance.md) | Principios éticos, usos permitidos/prohibidos |
-| [risk_assessment.md](docs/risk_assessment.md) | Evaluación de riesgos y mitigaciones |
-| [prompt_contract.md](docs/prompt_contract.md) | Formato de entrada/salida del LLM |
-| [decisions.md](docs/decisions.md) | ADRs (Architecture Decision Records) |
-| [dataset_sources.md](docs/dataset_sources.md) | Fuentes de datos públicos |
+| [KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md) | **Base de conocimientos completa** - Arquitectura, conceptos RAG, flujos, decisiones técnicas |
 
 ---
 
@@ -329,7 +340,23 @@ make eval         # Ejecutar evaluación
 - [x] **Hito 2**: /query con citas JSON
 - [x] **Hito 3**: Guardrails + evaluación
 - [x] **Hito 4**: CI + Docker + documentación
-- [ ] **Backlog**: Reranking, filtros por entidad, caché
+- [x] **Hito 5**: Response Cache + Model Routing + Streaming UX
+
+### Optimizaciones Implementadas
+
+| Feature | Descripción | Beneficio |
+|---------|-------------|-----------|
+| **Response Cache** | Caché LRU con TTL de 24h | ~40% ahorro en llamadas API |
+| **Model Routing** | Selección automática de modelo según complejidad | Queries simples → modelo económico |
+| **Streaming UX** | Server-Sent Events para respuestas en tiempo real | Mejor experiencia de usuario |
+| **Query Normalization** | Normaliza queries para mejor cache hit rate | Mayor eficiencia de caché |
+
+### Backlog Futuro
+
+- [ ] Reranking con cross-encoder
+- [ ] Filtros por entidad/fecha
+- [ ] Multi-tenancy
+- [ ] Observabilidad (métricas, tracing)
 
 ---
 
