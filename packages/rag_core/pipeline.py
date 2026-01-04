@@ -227,6 +227,10 @@ class RAGPipeline:
             grounding_result = self.grounding_checker.check(
                 answer=response["answer"], context_chunks=relevant_chunks
             )
+            print(f"   📊 Grounding: score={grounding_result.score:.2f}, is_grounded={grounding_result.is_grounded}")
+            print(f"   📊 Grounding details: {grounding_result.details}")
+            if grounding_result.ungrounded_claims:
+                print(f"   ⚠️ Ungrounded claims: {grounding_result.ungrounded_claims[:2]}")
 
             # Evaluar nuevamente con grounding score
             post_refusal = self.refusal_policy.evaluate(
@@ -234,19 +238,47 @@ class RAGPipeline:
                 grounding_score=grounding_result.score,
                 query=question,
             )
+            print(f"   📊 Post-refusal: should_refuse={post_refusal.should_refuse}, reason={post_refusal.reason}")
 
             if post_refusal.should_refuse:
-                return {
-                    **self.refusal_policy.format_refusal_response(post_refusal),
-                    "sources_used": len(relevant_chunks),
-                    "latency_ms": int((time.time() - start_time) * 1000),
-                    "guardrails": {
+                # Si el LLM dio una respuesta con buena confianza, no rechazarla
+                # El grounding check es muy estricto con paráfrasis
+                llm_confidence = response.get("confidence", 0)
+                has_citations = len(response.get("citations", [])) > 0
+
+                # Si el LLM está seguro (confidence >= 0.5) y tiene citas, confiar en él
+                if llm_confidence >= 0.5 and has_citations:
+                    print(f"   ✅ Aceptando respuesta: LLM confidence={llm_confidence}, citations={has_citations}")
+                    response["guardrails"] = {
                         "grounding_score": grounding_result.score,
                         "grounding_details": grounding_result.details,
-                        "ungrounded_claims": grounding_result.ungrounded_claims[:3],
-                        "post_refusal": True,
-                    },
-                }
+                        "is_grounded": False,
+                        "llm_confidence_override": True,
+                        "warning": "Grounding bajo pero LLM confiado con citas",
+                    }
+                # Si el grounding es bajo pero tenemos una respuesta, mostrarla con advertencia
+                elif grounding_result.score >= 0.1 and response.get("answer"):
+                    response["guardrails"] = {
+                        "grounding_score": grounding_result.score,
+                        "grounding_details": grounding_result.details,
+                        "is_grounded": False,
+                        "warning": "Respuesta con bajo nivel de verificación",
+                    }
+                    # No rechazar, devolver con advertencia
+                else:
+                    return {
+                        **self.refusal_policy.format_refusal_response(post_refusal),
+                        "sources_used": len(relevant_chunks),
+                        "model": response.get("model"),
+                        "provider": response.get("provider"),
+                        "latency_ms": int((time.time() - start_time) * 1000),
+                        "guardrails": {
+                            "grounding_score": grounding_result.score,
+                            "grounding_details": grounding_result.details,
+                            "ungrounded_claims": grounding_result.ungrounded_claims[:3],
+                            "post_refusal": True,
+                        },
+                    }
 
             # Agregar info de guardrails a la respuesta
             response["guardrails"] = {

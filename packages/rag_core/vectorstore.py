@@ -103,18 +103,26 @@ class VectorStore:
         settings = get_settings()
         top_k = top_k or settings.top_k_results
 
+        print(f"   [VectorStore.search] hybrid_search={settings.hybrid_search}, query='{query[:50]}...'")
+
         vector_results = self._vector_search(query, top_k)
         if not settings.hybrid_search:
+            print(f"   [VectorStore.search] Usando SOLO vector search")
             return vector_results
 
+        print(f"   [VectorStore.search] Usando HYBRID search (vector_weight={settings.vector_weight}, keyword_weight={settings.keyword_weight})")
         keyword_results = self._keyword_search(query, top_k)
-        return self._merge_results(
+        print(f"   [VectorStore.search] keyword_results: {len(keyword_results)} matches")
+
+        merged = self._merge_results(
             vector_results,
             keyword_results,
             top_k,
             settings.vector_weight,
             settings.keyword_weight,
         )
+        print(f"   [VectorStore.search] merged_results: top scores = {[r.get('score', 0) for r in merged[:3]]}")
+        return merged
 
     def _vector_search(self, query: str, top_k: int) -> list[dict]:
         """Busca por similitud vectorial en ChromaDB."""
@@ -148,7 +156,11 @@ class VectorStore:
         normalized_query = self._normalize_text(query)
         tokens = self._tokenize(normalized_query)
         phrases = self._extract_phrases(tokens)
+        print(f"   [_keyword_search] normalized_query='{normalized_query}'")
+        print(f"   [_keyword_search] tokens={tokens}")
+        print(f"   [_keyword_search] phrases={phrases}")
         if not tokens:
+            print(f"   [_keyword_search] No tokens found, returning empty")
             return []
 
         scored = []
@@ -205,6 +217,9 @@ class VectorStore:
 
             offset += batch_size
 
+        print(f"   [_keyword_search] Total scored matches: {len(scored)}")
+        if scored:
+            print(f"   [_keyword_search] Top match score: {scored[0]['score'] if scored else 0}")
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:top_k]
 
@@ -218,38 +233,48 @@ class VectorStore:
     ) -> list[dict]:
         """Combina resultados de vector y keyword."""
         merged = {}
-        exact_hits = [r for r in keyword_results if r.get("exact_match")]
 
-        max_keyword = max((r["score_keyword"] for r in keyword_results), default=0.0)
-        for res in keyword_results:
-            keyword_norm = res["score_keyword"] / max_keyword if max_keyword else 0.0
-            res["score_keyword"] = keyword_norm
-            res["score"] = keyword_weight * keyword_norm
+        # Primero, agregar todos los resultados de vector
+        for res in vector_results:
+            res["score"] = vector_weight * res["score_vector"]
             merged[res["chunk_id"]] = res
 
-        for res in vector_results:
+        # Normalizar keyword scores
+        max_keyword = max((r["score_keyword"] for r in keyword_results), default=0.0)
+
+        # Luego, agregar/combinar keyword results
+        for res in keyword_results:
+            keyword_norm = res["score_keyword"] / max_keyword if max_keyword else 0.0
             chunk_id = res["chunk_id"]
-            vector_score = res["score_vector"]
+
             if chunk_id in merged:
-                keyword_score = merged[chunk_id]["score_keyword"]
-                merged[chunk_id]["score_vector"] = vector_score
-                merged[chunk_id]["score"] = (vector_weight * vector_score) + (
-                    keyword_weight * keyword_score
-                )
+                # Chunk existe en ambos - combinar scores
+                merged[chunk_id]["score_keyword"] = keyword_norm
+                merged[chunk_id]["exact_match"] = res.get("exact_match")
+                merged[chunk_id]["token_hits"] = res.get("token_hits")
+                merged[chunk_id]["phrase_matches"] = res.get("phrase_matches")
+                merged[chunk_id]["score"] = (
+                    vector_weight * merged[chunk_id]["score_vector"]
+                ) + (keyword_weight * keyword_norm)
             else:
-                res["score"] = vector_weight * vector_score
+                # Chunk solo en keyword - darle un boost significativo
+                # Si tiene exact_match, es MUY relevante aunque no esté en vector top-k
+                res["score_keyword"] = keyword_norm
+                if res.get("exact_match"):
+                    # Exact match: score alto garantizado
+                    res["score"] = 0.85 + (keyword_weight * keyword_norm)
+                elif res.get("phrase_matches", 0) > 0:
+                    # Phrase match: score moderado-alto
+                    res["score"] = 0.70 + (keyword_weight * keyword_norm)
+                else:
+                    # Solo token hits: score basado en keyword
+                    res["score"] = 0.50 + (keyword_weight * keyword_norm)
                 merged[chunk_id] = res
 
         combined = list(merged.values())
         combined.sort(key=lambda x: x["score"], reverse=True)
 
-        if exact_hits:
-            exact_hits = sorted(
-                exact_hits, key=lambda x: x["score_keyword"], reverse=True
-            )
-            exact_ids = {r["chunk_id"] for r in exact_hits}
-            remainder = [r for r in combined if r["chunk_id"] not in exact_ids]
-            combined = exact_hits + remainder
+        print(f"   [_merge_results] Top 3 after merge: {[(c.get('metadata', {}).get('page'), c.get('score'), c.get('exact_match')) for c in combined[:3]]}")
 
         return combined[:top_k]
 

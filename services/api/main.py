@@ -341,6 +341,98 @@ async def clear_cache():
     return {"status": "success", "message": "Cache limpiado"}
 
 
+@app.get("/debug/settings", tags=["Debug"])
+async def debug_settings():
+    """
+    Debug: Muestra la configuración actual del sistema.
+    Útil para verificar que las variables de entorno se cargaron correctamente.
+    """
+    from packages.rag_core.config import get_settings
+
+    settings = get_settings()
+    return {
+        "hybrid_search": settings.hybrid_search,
+        "vector_weight": settings.vector_weight,
+        "keyword_weight": settings.keyword_weight,
+        "llm_provider": settings.llm_provider,
+        "groq_model": settings.groq_model,
+        "gemini_model": settings.gemini_model,
+        "top_k_results": settings.top_k_results,
+        "chunk_size": settings.chunk_size,
+        "embedding_model": settings.embedding_model,
+        "chroma_persist_dir": settings.chroma_persist_dir,
+    }
+
+
+@app.post("/debug/llm", tags=["Debug"])
+async def debug_llm(request: QueryRequest):
+    """
+    Debug: Prueba el LLM directamente sin guardrails.
+    Muestra la respuesta cruda del modelo.
+    """
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline no inicializado")
+
+    from packages.rag_core.config import get_settings
+    from packages.rag_core.pipeline import normalize_query
+
+    settings = get_settings()
+
+    try:
+        # Normalizar y buscar chunks
+        normalized = normalize_query(request.question)
+        chunks = pipeline.vector_store.search(normalized, top_k=request.top_k or 5)
+
+        # Hacer routing
+        routing_decision = None
+        if pipeline.enable_routing:
+            routing_decision = pipeline.router.route(request.question, chunks)
+
+        # Generar respuesta SIN guardrails
+        response = pipeline.generator.generate(
+            request.question,
+            chunks,
+            model_override=routing_decision.model if routing_decision else None,
+            provider_override=routing_decision.provider if routing_decision else None,
+        )
+
+        return {
+            "question": request.question,
+            "normalized": normalized,
+            "settings": {
+                "hybrid_search": settings.hybrid_search,
+                "vector_weight": settings.vector_weight,
+                "keyword_weight": settings.keyword_weight,
+            },
+            "routing": {
+                "provider": routing_decision.provider if routing_decision else None,
+                "model": routing_decision.model if routing_decision else None,
+                "complexity_score": routing_decision.complexity_score if routing_decision else None,
+            },
+            "chunks_count": len(chunks),
+            "chunks_scores": [c.get("score", 0) for c in chunks[:5]],
+            "chunks_details": [
+                {
+                    "score": c.get("score", 0),
+                    "score_vector": c.get("score_vector"),
+                    "score_keyword": c.get("score_keyword"),
+                    "exact_match": c.get("exact_match"),
+                    "page": c.get("metadata", {}).get("page"),
+                }
+                for c in chunks[:5]
+            ],
+            "llm_response": response,
+            "raw_answer": response.get("answer", ""),
+            "raw_llm_response": response.get("raw_llm_response"),
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
+
+
 # Servir interfaz web
 static_path = Path(__file__).parent / "static"
 if static_path.exists():

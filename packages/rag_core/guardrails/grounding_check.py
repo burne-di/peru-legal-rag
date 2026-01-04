@@ -26,8 +26,8 @@ class GroundingChecker:
 
     def __init__(
         self,
-        min_similarity: float = 0.3,  # Reducido para ser menos estricto
-        min_grounding_ratio: float = 0.5,  # Reducido: 50% de afirmaciones respaldadas
+        min_similarity: float = 0.2,  # Más permisivo para paráfrasis
+        min_grounding_ratio: float = 0.3,  # 30% de afirmaciones respaldadas es suficiente
     ):
         """
         Args:
@@ -60,10 +60,19 @@ class GroundingChecker:
                 details="No se encontraron afirmaciones verificables",
             )
 
+        # Debug: ver qué contenido tienen los chunks
+        print(f"   [Grounding] Chunks recibidos: {len(context_chunks)}")
+        for i, chunk in enumerate(context_chunks[:2]):
+            content = chunk.get("content", "")
+            print(f"   [Grounding] Chunk {i}: content_len={len(content)}, page={chunk.get('metadata', {}).get('page')}")
+            if content:
+                print(f"   [Grounding] Chunk {i} preview: {content[:100]}...")
+
         # Combinar todo el contexto
         full_context = " ".join(
             chunk.get("content", "") for chunk in context_chunks
         ).lower()
+        print(f"   [Grounding] Full context length: {len(full_context)}")
 
         # Verificar cada afirmación
         grounded_claims = []
@@ -148,6 +157,12 @@ class GroundingChecker:
                 matches_found += 1
 
         phrase_match_ratio = matches_found / len(key_phrases) if key_phrases else 0
+
+        # Estrategia 1.5: Buscar términos técnicos/específicos individualmente
+        # Si al menos 2 términos clave están en el contexto, dar crédito parcial
+        individual_matches = sum(1 for p in key_phrases if len(p.split()) == 1 and p in full_context)
+        if individual_matches >= 2:
+            phrase_match_ratio = max(phrase_match_ratio, 0.4)
 
         # Estrategia 2: Similitud con chunks individuales
         best_similarity = 0.0

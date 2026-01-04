@@ -2,9 +2,20 @@
 Configuración central del proyecto
 """
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings
+
+
+def _parse_bool_env(key: str, default: bool = True) -> bool:
+    """Parse boolean from environment variable correctly."""
+    val = os.environ.get(key, "").lower()
+    if val in ("true", "1", "yes", "on"):
+        return True
+    if val in ("false", "0", "no", "off"):
+        return False
+    return default
 
 
 class Settings(BaseSettings):
@@ -42,6 +53,12 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Force re-read HYBRID_SEARCH from env to ensure correct boolean parsing
+        self.hybrid_search = _parse_bool_env("HYBRID_SEARCH", default=True)
+        print(f"[Config] hybrid_search={self.hybrid_search} (from env: {os.environ.get('HYBRID_SEARCH', 'not set')})")
 
 
 @lru_cache
