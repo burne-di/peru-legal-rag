@@ -2,9 +2,9 @@
 Refusal Policy - Política de rechazo cuando no hay evidencia suficiente
 """
 
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
-import unicodedata
 
 
 class RefusalReason(Enum):

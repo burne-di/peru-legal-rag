@@ -2,9 +2,9 @@
 Vector Store - Embeddings y ChromaDB
 """
 
-from pathlib import Path
 import re
 import unicodedata
+from pathlib import Path
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -107,7 +107,7 @@ class VectorStore:
 
         vector_results = self._vector_search(query, top_k)
         if not settings.hybrid_search:
-            print(f"   [VectorStore.search] Usando SOLO vector search")
+            print("   [VectorStore.search] Usando SOLO vector search")
             return vector_results
 
         print(f"   [VectorStore.search] Usando HYBRID search (vector_weight={settings.vector_weight}, keyword_weight={settings.keyword_weight})")
@@ -160,7 +160,7 @@ class VectorStore:
         print(f"   [_keyword_search] tokens={tokens}")
         print(f"   [_keyword_search] phrases={phrases}")
         if not tokens:
-            print(f"   [_keyword_search] No tokens found, returning empty")
+            print("   [_keyword_search] No tokens found, returning empty")
             return []
 
         scored = []
